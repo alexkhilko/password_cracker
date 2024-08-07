@@ -1,6 +1,6 @@
 import string
 from hashlib import md5
-
+import argparse
 
 def get_permutations(count: int, chars: list[str]):
     if count == 1:
@@ -22,4 +22,12 @@ def crack_password(hash: str, max_lenght: int = 4) -> str | None:
             return permutation
     return None
 
-print(crack_password("7a95bf926a0333f57705aeac07a362a2", 4))
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        prog='Password Cracker',
+        description='Simple Password Cracker that allows to crack md5 encrypted passwords'
+    )
+    parser.add_argument("hash")
+    args = parser.parse_args()
+    print(crack_password(args.hash, 4))
