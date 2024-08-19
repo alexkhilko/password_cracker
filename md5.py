@@ -1,51 +1,108 @@
 from bitarray import bitarray
 import math
-import struct
 
 WORD_SIZE = 32
+INIT_BUFFER = [0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476]
 
-# Initialization constants (A, B, C, D)
-A = 0x67452301
-B = 0xEFCDAB89
-C = 0x98BADCFE
-D = 0x10325476
 
 def _get_block_bit_array(input: bytes) -> bitarray:
-    length = len(input) * 8
-    bit_array = bitarray(endian="big")
-    bit_array.frombytes(input)
-    bit_array.append(1)
-    while len(bit_array) % 512 != 448:
-        bit_array.append(0)
-    length_bit_array = bitarray(endian="little")
-    length_bit_array.frombytes(struct.pack("<Q", length))
-    bit_array.extend(length_bit_array)
-    return bit_array
+    msg = bytearray(input)
+    msg_len_in_bits = (8 * len(msg)) & 0xFFFFFFFFFFFFFFFF
+    msg.append(0x80)
 
-def _split_into_words(bits: bitarray, size: int) -> list[int]:
-    words = []
-    for i in range(0, len(bits), size):
-        words.append(bits[i : i + size])
-    return [int.from_bytes(word.tobytes(), byteorder="little") for word in words]
+    while len(msg) % 64 != 56:
+        msg.append(0)
+    msg += msg_len_in_bits.to_bytes(8, byteorder="little")
+    a = bitarray(endian="little")
+    a.frombytes(bytes(msg))
+    return a
 
-def _get_hash(a, b, c, d):
-    
-    return f"{a:08x}{b:08x}{c:08x}{d:08x}"
 
-def get_md5_hash(input: bytes):
-    block_bits = _get_block_bit_array(input)
-    words = _split_into_words(block_bits, WORD_SIZE)
-    K = [math.floor(pow(2, 32) * abs(math.sin(i + 1))) for i in range(64)]
-    S = [
-        7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,  # Round 1
-        5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,      # Round 2
-        4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,  # Round 3
-        6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21   # Round 4
+def _to_hex(digest):
+    raw = digest.to_bytes(16, byteorder="little")
+    return "{:032x}".format(int.from_bytes(raw, byteorder="big"))
+
+
+def rotate_left(x, amount):
+    x &= 0xFFFFFFFF
+    return (x << amount | x >> (32 - amount)) & 0xFFFFFFFF
+
+
+def modular_add(x, y):
+    return (x + y) & 0xFFFFFFFF
+
+
+def get_md5_hash(input: str):
+    bits = _get_block_bit_array(input.encode("ascii"))
+    constants = [int(abs(math.sin(i + 1)) * 4294967296) & 0xFFFFFFFF for i in range(64)]
+    rotate_by = [
+        7,
+        12,
+        17,
+        22,
+        7,
+        12,
+        17,
+        22,
+        7,
+        12,
+        17,
+        22,
+        7,
+        12,
+        17,
+        22,
+        5,
+        9,
+        14,
+        20,
+        5,
+        9,
+        14,
+        20,
+        5,
+        9,
+        14,
+        20,
+        5,
+        9,
+        14,
+        20,
+        4,
+        11,
+        16,
+        23,
+        4,
+        11,
+        16,
+        23,
+        4,
+        11,
+        16,
+        23,
+        4,
+        11,
+        16,
+        23,
+        6,
+        10,
+        15,
+        21,
+        6,
+        10,
+        15,
+        21,
+        6,
+        10,
+        15,
+        21,
+        6,
+        10,
+        15,
+        21,
     ]
-    
-    a, b, c, d = A, B, C, D
-    modular_add = lambda x, y: (x + y) % pow(2, 32)
-    rotate_left = lambda x, n: ((x << n) | (x >> (32 - n))) & 0xFFFFFFFF
+    init_temp = INIT_BUFFER[:]
+    a, b, c, d = init_temp
 
     for i in range(64):
         if 0 <= i <= 15:
@@ -61,20 +118,29 @@ def get_md5_hash(input: bytes):
             f = c ^ (b | ~d)
             g = (7 * i) % 16
 
-        temp = modular_add(a, f)
-        temp = modular_add(temp, K[i])
-        temp = modular_add(temp, words[g])
-        temp = rotate_left(temp, S[i])
-        temp = modular_add(temp, b)
-        
-        a, b, c, d = d, temp, b, c
-    
-    a = modular_add(a, A)
-    b = modular_add(b, B)
-    c = modular_add(c, C)
-    d = modular_add(d, D)
-    
-    return _get_hash(a, b, c, d)
+        to_rotate = (
+            a
+            + f
+            + constants[i]
+            + int.from_bytes(
+                (bits[WORD_SIZE * g : WORD_SIZE * (1 + g)]).tobytes(),
+                byteorder="little",
+            )
+        )
+        temp = (b + rotate_left(to_rotate, rotate_by[i])) & 0xFFFFFFFF
 
-# Test the implementation
-print(get_md5_hash(b"a")) 
+        a, b, c, d = d, temp, b, c
+
+    for i, val in enumerate([a, b, c, d]):
+        init_temp[i] += val
+        init_temp[i] &= 0xFFFFFFFF
+
+    return _to_hex(
+        sum(buffer_content << (32 * i) for i, buffer_content in enumerate(init_temp))
+    )
+
+
+if __name__ == "__main__":
+    message = input("Please input your pwd")
+    print(f"Your hash for input `{message}` is: \n")
+    print(get_md5_hash(message))
